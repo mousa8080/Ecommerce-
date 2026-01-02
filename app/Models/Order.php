@@ -67,6 +67,10 @@ class Order extends Model
             'payment_status' => PaymentStatus::FAILED,
         ]);
     }
+    public function canBeAcceptPayment()
+    {
+        return $this->status == PaymentStatus::PENDING || PaymentStatus::FAILED;
+    }
     public static function boot()
     {
         parent::boot();
