@@ -27,6 +27,7 @@ class AuthCustomerController  extends Controller
             'type' => 'customer',
         ]);
         $token = $user->createToken('auth_token')->plainTextToken;
+        $user->assignRole($user->type);
         return response()->json([
             'status' => true,
             'message' => 'Customer registered successfully',

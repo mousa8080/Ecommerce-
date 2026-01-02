@@ -27,6 +27,7 @@ class AuthAdminController  extends Controller
             'type' => 'admin',
         ]);
         $token = $user->createToken('auth_token')->plainTextToken;
+        $user->assignRole($user->type);
         return response()->json([
             'status' => true,
             'message' => 'Admin registered successfully',

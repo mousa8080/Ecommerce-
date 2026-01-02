@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ProductReqeust;
+use App\Http\Requests\UpdateProductReqeust;
 use App\Models\Product;
-use Illuminate\Http\Request;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
 
 class productController extends Controller
 {
@@ -14,7 +17,10 @@ class productController extends Controller
      */
     public function index()
     {
-        $products = Product::all();
+        $products = Cache()->remember('products', 300, function () {
+            return Product::with(relations: 'categorys')->filter($filter = request()->query())->paginate();
+        });
+
         return response()->json([
             'status' => true,
             'message' => 'product retrieved successfully',
@@ -25,19 +31,16 @@ class productController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(ProductReqeust $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'slug' => 'required|string|max:255|unique:products,slug',
-            'description' => 'nullable|string',
-            'price' => 'required|numeric|min:0',
-            'stock' => 'required|integer|min:0',
-            'SKU' => 'required|string|max:100|unique:products,SKU',
-            'is_active' => 'boolean',
-            'image' => 'nullable|string|max:255',
-        ]);
-        $product = Product::create($request->all());
+        $data = $request->validated();
+        if ($request->hasFile('image')) {
+
+            $data['image'] = $request->file('image')->storeAs('products', '' . $request->file('image')->getClientOriginalName() . '.' . $request->file('image')->getClientOriginalExtension(), 'public', 'public');
+        }
+        $product = Product::create($data);
+        $product->categorys()->attach($request->categorys);
+        $product->load('categorys');
         return response()->json([
             'status' => true,
             'message' => 'product created successfully',
@@ -50,6 +53,11 @@ class productController extends Controller
      */
     public function show(Product $product)
     {
+        $product = Cache::remember("product_{$product->id}", 300, function () use ($product) {
+            return $product->load('categorys');
+        });
+        $product->load('categorys');
+
         return response()->json([
             'status' => true,
             'message' => 'product retrieved successfully',
@@ -60,28 +68,19 @@ class productController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, Product $product)
+    public function update(UpdateProductReqeust $request, Product $product)
     {
-        $request->validate([
-            'name' => 'sometimes|required|string|max:255',
-            'slug' => 'sometimes|required|string|max:255|unique:products,slug,' . $product->id,
-            'description' => 'nullable|string',
-            'price' => 'sometimes|required|numeric|min:0',
-            'stock' => 'sometimes|required|integer|min:0',
-            'SKU' => 'sometimes|required|string|max:100|unique:products,SKU,' . $product->id,
-            'is_active' => 'boolean',
-            'image' => 'nullable|string|max:255',
-        ]);
-        if ($request->has('name')) {
-            $product->name = $request->name;;
+        $data = $request->validated();
+        if ($request->hasFile('image')) {
+            $filename = $product->SKU . '.' . $request->file('image')->getClientOriginalExtension();
+            $data['image'] = $request->file('image')->storeAs('products', $filename, 'public');
         }
-        if ($request->has('description')) $product->description = $request->description;
-        if ($request->has('price')) $product->price = $request->price;
-        if ($request->has('stock')) $product->stock = $request->stock;
-        if ($request->has('SKU')) $product->SKU = $request->SKU;
-        if ($request->has('is_active')) $product->is_active = $request->is_active;
+        Cache::forget("product_{$product->id}");
+        Cache::forget('products');
 
-        $product->save();
+        $product->update($data);
+        $product->categorys()->sync($request->categorys);
+        $product->load('categorys');
         return response()->json([
             'status' => true,
             'message' => 'product updated successfully',
@@ -94,10 +93,81 @@ class productController extends Controller
      */
     public function destroy(Product $product)
     {
+        if ($product->image) {
+            Storage::disk('public')->delete($product->image);
+        }
+        Cache::forget("product_{$product->id}");
+        Cache::forget('products');
         $product->delete();
         return response()->json([
             'status' => true,
             'message' => 'product deleted successfully'
+        ], 200);
+    }
+
+    public function restore(Request $request, Product $product)
+    {
+        if ($request->user()->hasRole('admin')) {
+            $product->restore();
+            return response()->json([
+                'status' => true,
+                'message' => 'product restored successfully'
+            ], 200);
+        }
+        return response()->json([
+            'status' => false,
+            'message' => 'unauthorized'
+        ], 403);
+    }
+    public function forceDelete(Request $request, Product $product)
+    {
+        if ($request->user()->hasRole('admin')) {
+            $product->forceDelete();
+            return response()->json([
+                'status' => true,
+                'message' => 'product permanently deleted successfully'
+            ], 200);
+        }
+        return response()->json([
+            'status' => false,
+            'message' => 'unauthorized'
+        ], 403);
+    }
+    public function softDeletedProducts(Request $request, Product $product)
+    {
+        if ($request->user()->hasRole('admin')) {
+            $product->onlyTrashed();
+            return response()->json([
+                'status' => true,
+                'message' => 'trashed product retrieved successfully',
+                'product' => $product
+            ], 200);
+        }
+        return response()->json([
+            'status' => false,
+            'message' => 'unauthorized'
+        ], 403);
+    }
+    //filter products name and description and min and max price
+    public function filter(Request $request)
+    {
+        $products = Product::query()
+            ->when($request->input('name'), function ($query, $name) {
+                $query->where('name', 'like', "%{$name}%");
+            })
+            ->when($request->input('description'), function ($query, $description) {
+                $query->where('description', 'like', "%{$description}%");
+            })
+            ->when($request->input('min_price'), function ($query, $min_price) {
+                $query->where('price', '>=', $min_price);
+            })
+            ->when($request->input('max_price'), function ($query, $max_price) {
+                $query->where('price', '<=', $max_price);
+            })->get();
+        return response()->json([
+            'status' => true,
+            'message' => 'filtered products retrieved successfully',
+            'products' => $products
         ], 200);
     }
 }

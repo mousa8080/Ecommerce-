@@ -12,7 +12,7 @@ use Spatie\Permission\Traits\HasRoles;
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable, HasApiTokens ,HasRoles;
+    use HasFactory, Notifiable, HasApiTokens, HasRoles;
 
     /**
      * The attributes that are mass assignable.
@@ -25,7 +25,7 @@ class User extends Authenticatable
         'type',
         'password',
     ];
-    protected $guard_name = 'web';
+    protected $guard_name = 'sanctum';
 
     /**
      * The attributes that should be hidden for serialization.
@@ -60,5 +60,9 @@ class User extends Authenticatable
     public function isDelevery()
     {
         return $this->type === 'delevery';
+    }
+    public function orders()
+    {
+        return $this->hasMany(Order::class);
     }
 }

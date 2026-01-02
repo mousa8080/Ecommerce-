@@ -26,7 +26,9 @@ class AuthDeleveryController  extends Controller
             'password' => Hash::make($data['password']),
             'type' => 'delevery',
         ]);
+
         $token = $user->createToken('auth_token')->plainTextToken;
+        $user->assignRole($user->type);
         return response()->json([
             'status' => true,
             'message' => 'Driver registered successfully',
